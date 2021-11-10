@@ -60,6 +60,7 @@ local HitlistInfo =
     Padding         = Vector(10, 3),
     Spacing         = 10,
     MaxShots        = 7,
+    InDrag          = false,
     MovementInfo        = {},
     LocalMovementInfo   = {}
 }
@@ -365,6 +366,7 @@ local function HandleMovement(Info, Position, Size)
         -- If this click was off the hitlist then dont run any movement
         if not Info.ClickedOff then
             if (PointInBounds or Info.Held) then
+                HitlistInfo.InDrag = true
                 if not Info.Held then
                     Info.GrabOffset = Vector(CursorPos.x - Position.x, CursorPos.y - Position.y) -- We arent holding aka first click. Set our grab delta
                 end
@@ -404,6 +406,13 @@ local function OnPaint()
     if #ActiveSelfElements > 0 then
         local Size = DrawTable(HitlistInfo.SelfPosition, ActiveSelfElements, LocalDamage)
         HitlistInfo.SelfPosition = HandleMovement(HitlistInfo.LocalMovementInfo, HitlistInfo.SelfPosition, Size)
+    end
+end
+
+local function SetupCommand(cmd)
+    if HitlistInfo.InDrag then
+        cmd.in_attack = false
+        HitlistInfo.InDrag = false
     end
 end
 
@@ -464,11 +473,10 @@ local function OnShutdown()
         MainPosition = {HitlistInfo.Position.x, HitlistInfo.Position.y},
         SelfPosition = {HitlistInfo.SelfPosition.x, HitlistInfo.SelfPosition.y},
     })
-    client_unset_event_callback("player_hurt", OnPlayerHurt)
-    client_unset_event_callback("round_start", OnRoundStart)
 end
 
 client_set_event_callback("paint_ui",       OnPaint)
+client_set_event_callback("setup_command",  SetupCommand)
 client_set_event_callback("aim_fire",       OnAimFire)
 client_set_event_callback("aim_hit",        OnAimHit)
 client_set_event_callback("aim_miss",       OnAimMiss)
