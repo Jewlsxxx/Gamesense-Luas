@@ -1,11 +1,17 @@
-local client_color_log, client_key_state, client_screen_size, client_set_event_callback, client_unset_event_callback, client_userid_to_entindex, database_read, database_write, entity_get_local_player, entity_get_player_name, entity_get_player_weapon, entity_get_prop, globals_realtime, globals_tickcount, math_floor, math_random, renderer_gradient, renderer_measure_text, renderer_rectangle, require, pcall, plist_get, renderer_load_rgba, renderer_text, renderer_texture, string_upper, ui_get, ui_menu_position, ui_menu_size, ui_mouse_position, ui_new_color_picker, ui_new_combobox, ui_new_multiselect, ui_reference, ui_set_callback, ui_set_visible, pairs = client.color_log, client.key_state, client.screen_size, client.set_event_callback, client.unset_event_callback, client.userid_to_entindex, database.read, database.write, entity.get_local_player, entity.get_player_name, entity.get_player_weapon, entity.get_prop, globals.realtime, globals.tickcount, math.floor, math.random, renderer.gradient, renderer.measure_text, renderer.rectangle, require, pcall, plist.get, renderer.load_rgba, renderer.text, renderer.texture, string.upper, ui.get, ui.menu_position, ui.menu_size, ui.mouse_position, ui.new_color_picker, ui.new_combobox, ui.new_multiselect, ui.reference, ui.set_callback, ui.set_visible, pairs
+-- local variables for API functions. any changes to the line below will be lost on re-generation
+local client_color_log, client_create_interface, client_key_state, client_screen_size, client_set_event_callback, client_unset_event_callback, client_userid_to_entindex, database_read, database_write, entity_get_local_player, entity_get_player_name, entity_get_player_weapon, entity_get_players, entity_get_prop, globals_realtime, globals_tickcount, math_deg, math_floor, renderer_gradient, renderer_measure_text, renderer_rectangle, require, error, pcall, plist_get, renderer_load_rgba, renderer_text, renderer_texture, string_format, string_upper, ui_get, ui_is_menu_open, ui_menu_position, ui_menu_size, ui_mouse_position, ui_new_color_picker, ui_new_combobox, ui_new_multiselect, ui_reference, ui_set_callback, ui_set_visible, pairs = client.color_log, client.create_interface, client.key_state, client.screen_size, client.set_event_callback, client.unset_event_callback, client.userid_to_entindex, database.read, database.write, entity.get_local_player, entity.get_player_name, entity.get_player_weapon, entity.get_players, entity.get_prop, globals.realtime, globals.tickcount, math.deg, math.floor, renderer.gradient, renderer.measure_text, renderer.rectangle, require, error, pcall, plist.get, renderer.load_rgba, renderer.text, renderer.texture, string.format, string.upper, ui.get, ui.is_menu_open, ui.menu_position, ui.menu_size, ui.mouse_position, ui.new_color_picker, ui.new_combobox, ui.new_multiselect, ui.reference, ui.set_callback, ui.set_visible, pairs
 
 local Vector    = require("vector")
 local Weapons   = require("gamesense/csgo_weapons")
 local Entity    = require("gamesense/entity")
+local ffi       = require("ffi")
 
 -- From solus ui
 local HSVToRGB = function(b,c,d,e)local f,g,h;local i=math_floor(b*6)local j=b*6-i;local k=d*(1-c)local l=d*(1-j*c)local m=d*(1-(1-j)*c)i=i%6;if i==0 then f,g,h=d,m,k elseif i==1 then f,g,h=l,d,k elseif i==2 then f,g,h=k,d,m elseif i==3 then f,g,h=k,l,d elseif i==4 then f,g,h=m,k,d elseif i==5 then f,g,h=d,k,l end;return f*255,g*255,h*255,e*255 end
+
+local RawEntityList         = client_create_interface("client_panorama.dll", "VClientEntityList003")    or error("Hitlist. RawEntityList not found", 2)
+local EntityListInterface   = ffi.cast(ffi.typeof("void***"), RawEntityList)                            or error("Hitlist. EntityList interface is null", 2)
+local GetClientEntity       = ffi.cast("void*(__thiscall*)(void*, int)", EntityListInterface[0][3])     or error("Hitlist. GetClientEntity is null", 2)
 
 local ElementNames = 
 {
@@ -18,7 +24,7 @@ local ElementNames =
     "Damage", 
     "Backtrack",
     "Angle",
-    "Prioritized Record",
+    "Spread Angle",
     "Miss Reason"
 }
 
@@ -61,8 +67,10 @@ local HitlistInfo =
     Spacing         = 10,
     MaxShots        = 7,
     InDrag          = false,
-    MovementInfo        = {},
-    LocalMovementInfo   = {}
+    MovementInfo    = {},
+    LocalMovementInfo   = {},
+
+    BackedUpAngles  = {},
 }
 
 if not database_read(HitlistInfo.DatabaseName) then
@@ -82,13 +90,23 @@ HitlistInfo.SelfPosition    = Vector(DB.SelfPosition[1], DB.SelfPosition[2])
 local Shots         = {}
 local LocalDamage    = {}
 
-local DpiToNumber = 
+local Hitgroups = 
 {
-    ["100%"] = 1,
-    ["125%"] = 1.25,
-    ["150%"] = 1.5,
-    ["175%"] = 1.75,
-    ["200%"] = 2,
+    [0] = "Generic",
+    "Head",
+    "Chest",
+    "Stomach",
+    "Arms",
+    "Arms",
+    "Legs",
+    "Legs",
+}
+
+
+local MissReason = 
+{
+    ["prediction error"]    = "Prediction",
+    ["unregistered shot"]   = "Unregistered",
 }
 
 local GrenadeNames = 
@@ -160,35 +178,48 @@ local function GetAngle(Player)
     return Clamp(math_floor(((Norm(EyeAngles.y) - GoalFeetYaw + 180) % 360 - 180) + 0.5), -60, 60) .. "°"
 end
 
-local function HitgroupToName(Index)
-    if Index == 1 then
-        return 'Head'
-    elseif Index == 2 then
-        return 'Chest'
-    elseif Index == 3 then
-        return 'Stomach'
-    elseif Index == 4 or Index == 5 then
-        return 'Arms'
-    elseif Index == 6 or Index == 7 then
-        return 'Legs'
+local function GetSpreadAngle()
+    -- I am terrible with ffi so if something is wrong here feel free to tell me.
+    local LocalWeapon   = entity_get_player_weapon(entity_get_local_player())
+    local RawEntity     = GetClientEntity(EntityListInterface, LocalWeapon)
+    if not RawEntity then
+        return "-"
     end
-    return '-'
+    local GetInaccuracyFn = ffi.cast("float(__thiscall*)(void*)", ffi.cast("void***", RawEntity)[0][483])
+
+    if not GetInaccuracyFn then
+        return "-"
+    end
+    
+    local Weapon = Weapons[entity_get_prop(LocalWeapon, "m_iItemDefinitionIndex") or -1]
+
+    if not Weapon then
+        return "-"
+    end
+
+    return string_format("%0.2f°", math_deg(Weapon.spread + GetInaccuracyFn(RawEntity)))
 end
 
 local function ShotInfo(Shot)
-    local Backtrack = globals_tickcount() - Shot.tick
+    local Backtrack     = globals_tickcount() - Shot.tick
+
+    -- Should never happen. Just a saftey check
+    if not HitlistInfo.BackedUpAngles[Shot.target] then
+        HitlistInfo.BackedUpAngles[Shot.target] = {}
+    end
+
     return 
     {
         [ElementNames[1]]   = Shot.id,
         [ElementNames[2]]   = entity_get_player_name(Shot.target),
-        [ElementNames[3]]   = HitgroupToName(Shot.hitgroup),
+        [ElementNames[3]]   = Hitgroups[Shot.hitgroup] or "-",
         [ElementNames[4]]   = "-",
         [ElementNames[5]]   = math_floor(Shot.hit_chance + 0.5) .. "%",
         [ElementNames[6]]   = Shot.damage,
         [ElementNames[7]]   = "-",
         [ElementNames[8]]   = Backtrack == 0 and "-" or Backtrack .. "t",
-        [ElementNames[9]]   = GetAngle(Shot.target), -- Angle
-        [ElementNames[10]]  = Shot.high_priority and "True" or "-",
+        [ElementNames[9]]   = HitlistInfo.BackedUpAngles[Shot.target][Shot.tick] or GetAngle(Shot.target), -- Check to see if this tick is saved if not get the current angle
+        [ElementNames[10]]  = GetSpreadAngle(),
         [ElementNames[11]]  = "-",
     }
 end
@@ -207,17 +238,17 @@ local function LocalDamageInfo(Event)
     {
         [SelfElementNames[1]] = AttackerName,
         [SelfElementNames[2]] = Weapon,
-        [SelfElementNames[3]] = Event.hitgroup == 0 and "Generic" or HitgroupToName(Event.hitgroup),
+        [SelfElementNames[3]] = Hitgroups[Event.hitgroup] or "-",
         [SelfElementNames[4]] = Event.dmg_health,
     }
 end
 
 local function LogConsole(Table, SelfDamage)
+    local r, g, b = ui_get(ColorPicker)
     if SelfDamage then
         local Combo = ui_get(SelfElementCombo)
         if #Combo == 0 then
             return end
-        local r, g, b = ui_get(ColorPicker)
         client_color_log(r, g, b, "[Hurt log] \0")
         for i = 1, #SelfElementNames do
             client_color_log(255, 255, 255, SelfElementNames[i] .. " \0")
@@ -228,7 +259,6 @@ local function LogConsole(Table, SelfDamage)
         if #Combo == 0 then
             return end
 
-        local r, g, b = ui_get(ColorPicker)
         client_color_log(r, g, b, "[Hitlist] \0")
         for i = 1, #ElementNames do
             client_color_log(255, 255, 255, ElementNames[i] .. " \0")
@@ -272,7 +302,7 @@ local function DrawSkeetWindow(x, y, w, h)
 end
 
 local function DrawTable(Position, ActiveElements, InfoTable)
-    local Dpi                   = DpiToNumber[ui_get(DpiCombo)]
+    local Dpi                   = ui_get(DpiCombo):gsub('%%', '') / 100
     local Style                 = ui_get(StyleCombo)
     local bTeamSkeet            = Style == "Teamskeet"
     local Padding, Spacing      = (bTeamSkeet and HitlistInfo.Padding * 1.5 or HitlistInfo.Padding) * Dpi, HitlistInfo.Spacing * Dpi
@@ -318,8 +348,9 @@ local function DrawTable(Position, ActiveElements, InfoTable)
 
         renderer_rectangle(Position.x, Position.y, WindowSize.x, WindowSize.y, 17, 17, 17, a)
         if SolusCombo[1] and ui_get(SolusCombo[2]) ~= "Solid" then
-            renderer_gradient(Position.x, Position.y, (WindowSize.x / 2) + 1, 2, g, b, r, 255, r, g, b, 255, true)
-            renderer_gradient(Position.x + WindowSize.x / 2, Position.y, WindowSize.x - WindowSize.x/2, 2, r, g, b, 255, b, r, g, 255, true)
+            local bOddWidth = WindowSize.x % 2 ~= 0
+            renderer_gradient(Position.x, Position.y, (WindowSize.x / 2), 2, g, b, r, 255, r, g, b, 255, true)
+            renderer_gradient(Position.x + WindowSize.x / 2, Position.y, WindowSize.x / 2 + (bOddWidth and 1 or 0), 2, r, g, b, 255, b, r, g, 255, true)
         else
             renderer_rectangle(Position.x, Position.y, WindowSize.x, 2, r, g, b, 255)
         end
@@ -352,28 +383,29 @@ end
 
 local function HandleMovement(Info, Position, Size)
     local CursorPos = Vector(ui_mouse_position())
-    if client_key_state(0x1) then
+    if ui_is_menu_open() and client_key_state(0x1) then
 
         -- Check whether we are in bounds or was in bounds when we clicked
         -- This fixes the issue where you stop dragging if you move to fast
         local PointInBounds = IsPointInBounds(CursorPos, Position, Position + Size)
 
-        -- Check if point is out of bounds and we are not already dragging
-        if IsPointInBounds(CursorPos, Vector(ui_menu_position()), Vector(ui_menu_position()) + Vector(ui_menu_size())) or not PointInBounds and not Info.Held then
+        -- Check if we are on the menu or off the hitlist and not already dragging
+        if (IsPointInBounds(CursorPos, Vector(ui_menu_position()), Vector(ui_menu_position()) + Vector(ui_menu_size())) or not PointInBounds) and not Info.Held then
             Info.ClickedOff = true;
         end
         
         -- If this click was off the hitlist then dont run any movement
         if not Info.ClickedOff then
             if (PointInBounds or Info.Held) then
-                HitlistInfo.InDrag = true
                 if not Info.Held then
-                    Info.GrabOffset = Vector(CursorPos.x - Position.x, CursorPos.y - Position.y) -- We arent holding aka first click. Set our grab delta
+                    -- We arent holding aka first click. Set our grab delta
+                    Info.GrabOffset = Vector(CursorPos.x - Position.x, CursorPos.y - Position.y)
                 end
                 -- We are holding now
                 Info.Held = true 
                 -- Move position based of grab delta
                 Position = Vector(CursorPos.x - Info.GrabOffset.x, CursorPos.y - Info.GrabOffset.y)
+                HitlistInfo.InDrag = true
             end
         end
     else
@@ -392,6 +424,7 @@ local function OnPaint()
     if not entity_get_local_player() then
         Shots       = {}
         LocalDamage = {}
+        HitlistInfo.BackedUpAngles = {}
         return
     end
     
@@ -411,8 +444,27 @@ end
 
 local function SetupCommand(cmd)
     if HitlistInfo.InDrag then
-        cmd.in_attack = false
-        HitlistInfo.InDrag = false
+        cmd.in_attack       = false
+        HitlistInfo.InDrag  = false
+    end
+
+    local Enemies = entity_get_players(true)
+
+    for i, Index in pairs(Enemies) do
+        if not HitlistInfo.BackedUpAngles[Index] then
+            HitlistInfo.BackedUpAngles[Index] = {}
+        end
+        HitlistInfo.BackedUpAngles[Index][globals_tickcount()] = GetAngle(Index)
+
+        for i2, v in pairs(HitlistInfo.BackedUpAngles[Index]) do
+            local Delta = globals_tickcount() - i2
+
+            -- I dont think actually calculating how many ticks you can backtrack is needed here
+            -- Just save 2 seconds worth
+            if Delta > 128 then
+                HitlistInfo.BackedUpAngles[Index][i2] = nil
+            end
+        end
     end
 end
 
@@ -426,7 +478,7 @@ end
 local function OnAimHit(Shot)
     for i = #Shots, 1, -1 do
         if Shots[i][ElementNames[1]] == Shot.id then
-            Shots[i]["Hit"] = HitgroupToName(Shot.hitgroup)
+            Shots[i]["Hit"] = Hitgroups[Shot.hitgroup] or "-"
             Shots[i]["Damage"] = Shot.damage
             if Contains(ui_get(ConsoleCombo), "Hitlist") then
                 LogConsole(Shots[i])
@@ -443,7 +495,7 @@ local function OnAimMiss(Shot)
 
     for i = #Shots, 1, -1 do
         if Shots[i][ElementNames[1]] == Shot.id then
-            Shots[i]["Miss Reason"] = Shot.reason == "prediction error" and "Prediction" or UpperReason(Shot.reason)
+            Shots[i]["Miss Reason"] = MissReason[Shot.reason] or UpperReason(Shot.reason)
             if Contains(ui_get(ConsoleCombo), "Hitlist") then
                 LogConsole(Shots[i])
             end
@@ -473,6 +525,8 @@ local function OnShutdown()
         MainPosition = {HitlistInfo.Position.x, HitlistInfo.Position.y},
         SelfPosition = {HitlistInfo.SelfPosition.x, HitlistInfo.SelfPosition.y},
     })
+    client_unset_event_callback("player_hurt", OnPlayerHurt)
+    client_unset_event_callback("round_start", OnRoundStart)
 end
 
 client_set_event_callback("paint_ui",       OnPaint)
