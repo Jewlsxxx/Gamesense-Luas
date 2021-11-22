@@ -1,5 +1,5 @@
 -- local variables for API functions. any changes to the line below will be lost on re-generation
-local client_set_event_callback, globals_frametime, globals_tickcount, math_floor, renderer_measure_text, renderer_text, renderer_world_to_screen, require, string_upper, ui_get, ui_new_checkbox, ui_new_color_picker, ui_reference, pairs = client.set_event_callback, globals.frametime, globals.tickcount, math.floor, renderer.measure_text, renderer.text, renderer.world_to_screen, require, string.upper, ui.get, ui.new_checkbox, ui.new_color_picker, ui.reference, pairs
+local client_set_event_callback, globals_frametime, globals_tickcount, math_floor, renderer_measure_text, renderer_text, renderer_world_to_screen, string_upper, pairs, ui_get, ui_new_checkbox, ui_new_color_picker, ui_reference, require = client.set_event_callback, globals.frametime, globals.tickcount, math.floor, renderer.measure_text, renderer.text, renderer.world_to_screen, string.upper, pairs, ui.get, ui.new_checkbox, ui.new_color_picker, ui.reference, require
 
 local Vector    = require("vector")
 
@@ -39,7 +39,7 @@ local MissValues =
 {
     ["UNKNOWN"]     = function(Shot) return Hitgroups[Shot.hitgroup] or nil end,
     ["SPREAD"]      = function(Shot) return math_floor(Shot.hit_chance + 0.5) .. "%" end,
-    ["PREDICTION"]  = function(Shot) return globals_tickcount() - Shot.tick .. "t" end
+    ["PREDICTION"]  = function(Shot) return Shots[Shot.id] and (globals_tickcount() - Shots[Shot.id].Tick .. "T") or "" end
 }
 
 local function OnPaint()
@@ -81,6 +81,7 @@ local function OnShotFired(Shot)
     Shots[Shot.id] = 
     {
         Pos         = Vector(Shot.x, Shot.y, Shot.z),
+        Tick        = Shot.tick,
         WaitTime    = _WaitTime,
         FadeTime    = 1,
     }
