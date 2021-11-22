@@ -1,7 +1,6 @@
 -- local variables for API functions. any changes to the line below will be lost on re-generation
 local client_set_event_callback, entity_get_all, entity_get_local_player, entity_get_prop, globals_frametime, globals_tickcount, renderer_line, renderer_world_to_screen, table_remove, pairs, ui_get, ui_new_checkbox, ui_new_color_picker, ui_new_slider, ui_set_callback, ui_set_visible, require = client.set_event_callback, entity.get_all, entity.get_local_player, entity.get_prop, globals.frametime, globals.tickcount, renderer.line, renderer.world_to_screen, table.remove, pairs, ui.get, ui.new_checkbox, ui.new_color_picker, ui.new_slider, ui.set_callback, ui.set_visible, require
 
--- Trying out different coding styles btw
 local Vector = require("vector")
 
 local g_iMasterSwitch   = ui_new_checkbox("VISUALS", "Effects", "Grenade trails")
