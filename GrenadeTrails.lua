@@ -1,23 +1,18 @@
 -- local variables for API functions. any changes to the line below will be lost on re-generation
-local client_find_signature, client_set_event_callback, entity_get_all, entity_get_local_player, entity_get_prop, globals_frametime, globals_tickcount, materialsystem_find_materials, renderer_line, renderer_world_to_screen, table_remove, pairs, ui_get, ui_new_checkbox, ui_new_color_picker, ui_new_combobox, ui_new_slider, ui_set_callback, ui_set_visible, error, require = client.find_signature, client.set_event_callback, entity.get_all, entity.get_local_player, entity.get_prop, globals.frametime, globals.tickcount, materialsystem.find_materials, renderer.line, renderer.world_to_screen, table.remove, pairs, ui.get, ui.new_checkbox, ui.new_color_picker, ui.new_combobox, ui.new_slider, ui.set_callback, ui.set_visible, error, require
+local client_find_signature, client_set_event_callback, entity_get_all, entity_get_local_player, entity_get_origin, entity_get_prop, globals_curtime, globals_tickcount, math_atan2, math_deg, math_fmod, math_min, renderer_line, renderer_world_to_screen, table_insert, ui_get, ui_new_checkbox, ui_new_color_picker, ui_new_combobox, ui_new_slider, ui_set_callback, ui_set_visible, unpack, pairs, error, require = client.find_signature, client.set_event_callback, entity.get_all, entity.get_local_player, entity.get_origin, entity.get_prop, globals.curtime, globals.tickcount, math.atan2, math.deg, math.fmod, math.min, renderer.line, renderer.world_to_screen, table.insert, ui.get, ui.new_checkbox, ui.new_color_picker, ui.new_combobox, ui.new_slider, ui.set_callback, ui.set_visible, unpack, pairs, error, require
 
-local Vector = require("vector")
--- @Aviarita local player tracers
+-- @Aviarita local player beam lua
 local ffi = require("ffi")
+local Vector = require("vector")
 ffi.cdef[[
-    typedef struct  {
-		float x;
-		float y;
-		float z;	
-	}vec3_t;
     struct beam_info_t {
         int			m_type;
         void* m_start_ent;
         int			m_start_attachment;
         void* m_end_ent;
         int			m_end_attachment;
-        vec3_t		m_start;
-        vec3_t		m_end;
+        Vector		m_start;
+        Vector		m_end;
         int			m_model_index;
         const char	*m_model_name;
         int			m_halo_index;
@@ -38,14 +33,19 @@ ffi.cdef[[
         bool		m_renderable;
         int			m_num_segments;
         int			m_flags;
-        vec3_t		m_center;
+        Vector		m_center;
         float		m_start_radius;
         float		m_end_radius;
     };
     typedef void (__thiscall* draw_beams_t)(void*, void*);
     typedef void*(__thiscall* create_beam_points_t)(void*, struct beam_info_t&);
+    struct Color {unsigned char _color[4];};
 ]]
 
+-- Credits @howard / Classy for addglowbox sig
+local g_GetGlowObjectManagerFn = ffi.cast( "void*( __cdecl* )()", client_find_signature( "client.dll", "\xA1\xCC\xCC\xCC\xCC\xA8\x01\x75\x4B") )
+local g_AddGlowBox_t  = "int( __thiscall* )(void*, Vector, Vector, Vector, Vector, struct Color, float )"
+local g_AddGlowBoxFn  = ffi.cast(g_AddGlowBox_t, client_find_signature("client.dll", "\x55\x8B\xEC\x53\x56\x8D\x59"))
 local g_BeamSignature       = client_find_signature("client_panorama.dll", "\xB9\xCC\xCC\xCC\xCC\xA1\xCC\xCC\xCC\xCC\xFF\x10\xA1\xCC\xCC\xCC\xCC\xB9") or error("Beam signature not found")
 local g_RenderBeams         = ffi.cast('void**', ffi.cast("char*", g_BeamSignature) + 1)[0] or error("Render beam is nil")
 local g_RenderBeamClass     = ffi.cast("void***", g_RenderBeams)
@@ -75,23 +75,43 @@ local function g_CreateBeam(Start, End, Duration, Color)
     pBeamInfo.m_num_segments= 2
     pBeamInfo.m_renderable  = true
     pBeamInfo.m_flags       = 0
-    pBeamInfo.m_start       = {Start.x, Start.y, Start.z}
-    pBeamInfo.m_end         = {End.x, End.y, End.z}
+    pBeamInfo.m_start       = Start
+    pBeamInfo.m_end         = End
 
     local pBeam = g_CreateBeamPoints(g_RenderBeamClass, pBeamInfo)
     if pBeam ~= nil then
         g_DrawBeam(g_RenderBeams, pBeam)
     end
 end
-local g_iMasterCombo    = ui_new_combobox("VISUALS",  "Effects", "Grenade trails", {"Off", "Line", "Beam"})
+
+local function g_CreateGlowBox(vecOrigin, vecAngle, vecMins, vecMaxs, aColor, flLife)
+    local GlowObjManager = g_GetGlowObjectManagerFn()
+    if not GlowObjManager then
+        return
+    end
+    local Index = g_AddGlowBoxFn(GlowObjManager, vecOrigin, vecAngle, vecMins, vecMaxs, ffi.new("struct Color", ffi.new("unsigned char[4]", aColor[1], aColor[2], aColor[3], aColor[4])), flLife)
+end
+
+local function g_VectorAngles(vecForward)
+    local flLength = vecForward:length2d()
+    if flLength < 0 then
+        return Vector()
+    end 
+    return Vector(math_deg(math_atan2(-vecForward.z, flLength)), math_deg(math_atan2(vecForward.y, vecForward.x)), 0)
+end
+
+local g_iMasterCombo    = ui_new_combobox("VISUALS",  "Effects", "Grenade trails", {"Off", "Line", "Glow", "Beam"})
 local g_iColor          = ui_new_color_picker("VISUALS",  "Effects", "Grenade trails", 255, 255, 255, 255)
 local g_iLocalOnly      = ui_new_checkbox("VISUALS", "Effects", "Local only")
 local g_iDuration       = ui_new_slider("VISUALS", "Effects", "Duration", 10, 100, 3, true, "s", 0.1)
+local g_iSize           = ui_new_slider("VISUALS", "Effects", "Size", 10, 100, 20, true, "u", 0.01)
+local g_iDotted         = ui_new_checkbox("VISUALS", "Effects", "Dotted")
+local g_iInverse        = ui_new_checkbox("VISUALS", "Effects", "Inverse")
 
-local g_bReset = true
-local g_aEntitys = {}
+local g_Lines = {}
+local g_Positions = {}
 local g_iOldTickcount = globals_tickcount()
-local g_aClassNames = 
+local g_ClassNames = 
 {
     "CSmokeGrenadeProjectile",
     "CMolotovProjectile",
@@ -99,104 +119,131 @@ local g_aClassNames =
     "CDecoyProjectile",
 }
 
-local function g_Paint()
-    local szMasterCombo = ui_get(g_iMasterCombo)
-    local aColor        = {ui_get(g_iColor)}
-    local iDuration     = ui_get(g_iDuration) / 10
-    local iLocalPlayer  = entity_get_local_player()
+local function g_CreateLine(vecPosOne, vecPosTwo, aColor, flLife)
+    local flCurtime = globals_curtime()
+    local pLineInfo = 
+    {
+        m_vecStartPos   = vecPosOne,
+        m_vecEndPos     = vecPosTwo,
+        m_flSpawntime   = flCurtime,
+        m_flDestroyTime = flCurtime + flLife,
+        m_aColor = aColor
+    }
+    table_insert(g_Lines, pLineInfo)
+end
 
-
-    if not iLocalPlayer or szMasterCombo == "Off" then
-        g_aEntitys = {}
-        g_bReset = true
-        return
-    end
-
-    if g_bReset then
-        local aBeamMaterials      = materialsystem_find_materials(g_szBeamMaterialName)
-        for iKey, pMaterial in pairs(aBeamMaterials or {}) do
-            pMaterial:set_material_var_flag(15, true) -- IgnoreZ
-        end
-        g_bReset = false
-    end
-
-    local flFrameTime = globals_frametime()
-    local iTickcount = globals_tickcount()
-    
-    -- Doing this here because run_command isnt called when in noclip or dead
-    if g_iOldTickcount ~= iTickcount then
-        local bLocalOnly    = ui_get(g_iLocalOnly)
-        -- Loop through all entity class names
-        for i = 1, #g_aClassNames do
-            -- Get entitys for this class
-            local aClassEntitys = entity_get_all(g_aClassNames[i])
-
-            -- Loop through all entitys in this class
-            for iKey, iIndex in pairs(aClassEntitys) do
-                -- If we are in local only mode, skip nades thrown by other players
-                if bLocalOnly and entity_get_prop(iIndex, "m_hOwnerEntity") ~= iLocalPlayer then
-                    goto continue
-                end
-                if not g_aEntitys[iIndex] then
-                    g_aEntitys[iIndex] = {}
-                end
-                -- Add new variables
-                g_aEntitys[iIndex][#g_aEntitys[iIndex] + 1] = 
-                {
-                    m_vecPosition   = Vector(entity_get_prop(iIndex, "m_vecOrigin")),
-                    m_flWaitTime    = 1,
-                    m_flAnimTime    = 1,
-                    m_bCreateBeam   = true,
-                }
-                ::continue::
+-- Fading from CSGO source
+local function g_DrawLines()
+    for iKey, pLine in pairs(g_Lines) do
+        local flLifeAlpha = (pLine.m_flDestroyTime - globals_curtime()) / (pLine.m_flDestroyTime - pLine.m_flSpawntime)
+        if flLifeAlpha <= 0 then
+            g_Lines[iKey] = nil
+        else
+            flLifeAlpha = math_min(flLifeAlpha * 4.0, 1.0)
+            local x, y = renderer_world_to_screen(pLine.m_vecStartPos:unpack())
+            local x2, y2 = renderer_world_to_screen(pLine.m_vecEndPos:unpack())
+            if x and x2 then
+                local r, g, b, a = unpack(pLine.m_aColor)
+                renderer_line(x, y, x2, y2, r, g, b, a * flLifeAlpha)
             end
         end
-        g_iOldTickcount = iTickcount
     end
+end
 
-    -- Loop through all entitys
-    for iEntityIndex, aEntityInfo in pairs(g_aEntitys) do
-        -- Loop through their positions
-        for iInfoIndex, aInfo in pairs(aEntityInfo) do
-            local aNextInfo = aEntityInfo[iInfoIndex + 1]
-            -- Check if there is a valid table position at index + 1
-            if aNextInfo then
-                -- This fixes a bug where previous grenades would link to new grenades with the same index
-                local flDistance = aInfo.m_vecPosition:dist(aNextInfo.m_vecPosition)
-                if flDistance < 200 and flDistance > 0 then
-                    if szMasterCombo == "Line" then
-                        local ix, iy = renderer_world_to_screen(aInfo.m_vecPosition.x, aInfo.m_vecPosition.y, aInfo.m_vecPosition.z)
-                        local ix2, iy2 = renderer_world_to_screen(aNextInfo.m_vecPosition.x, aNextInfo.m_vecPosition.y, aNextInfo.m_vecPosition.z)
-                        if ix then
-                            renderer_line(ix, iy, ix2, iy2, aColor[1], aColor[2], aColor[3], aColor[4] * aInfo.m_flAnimTime)
+local function g_Paint()
+    local iLocalPlayer = entity_get_local_player()
+    local szMasterValue = ui_get(g_iMasterCombo)
+    if not iLocalPlayer or szMasterValue == "Off" then
+        g_Positions = {}
+        g_Lines     = {}
+        g_iOldTickcount = 0
+        return
+    end
+    local iTickCount = globals_tickcount()
+    -- Check if we are more than 100 ticks out of sync (probably left and joined a server with a different tick count)
+    if g_iOldTickcount > iTickCount + 100 then
+        g_iOldTickcount = iTickCount
+    end
+    -- Wait 2 ticks for a slightly better preformance
+    if g_iOldTickcount + 2 < iTickCount then
+        local flDuration    = ui_get(g_iDuration) * 0.1
+        local flSize        = ui_get(g_iSize) * 0.01
+        local aColor        = {ui_get(g_iColor)}
+        local bDotted       = ui_get(g_iDotted)
+        local bInverse      = bDotted and ui_get(g_iInverse)
+        for iClassNameIndex = 1, #g_ClassNames do
+            local ClassEntitys = entity_get_all(g_ClassNames[iClassNameIndex])
+            for iKey, iEntityIndex in pairs(ClassEntitys) do
+                local bLocalOnly = (ui_get(g_iLocalOnly) and entity_get_prop(iEntityIndex, "m_hOwnerEntity") ~= iLocalPlayer)
+                if bLocalOnly or not g_Positions[iEntityIndex] or iTickCount - g_Positions[iEntityIndex][#g_Positions[iEntityIndex]].iTickCount > 4 then
+                    g_Positions[iEntityIndex] = {}
+                end
+                if bLocalOnly then
+                    goto continue
+                end
+                local pEntPosTable = g_Positions[iEntityIndex]
+                local iIndex = #pEntPosTable + 1
+                pEntPosTable[iIndex] = 
+                {
+                    iTickCount = iTickCount,
+                    vecPos = Vector(entity_get_origin(iEntityIndex)),
+                }
+                -- Check if we have a previous record and it isnt in the same spot
+                local pCurrent = pEntPosTable[iIndex]
+                local pPrev = pEntPosTable[iIndex - 1]
+                if pPrev then
+                    local flDistance = pCurrent.vecPos:dist(pPrev.vecPos)
+                    if flDistance ~= 0 then
+                        -- Multiple nades can conflicting colors
+                        local aUseColor     = {unpack(aColor)}
+                        local bUseDotted    = bDotted and (math_fmod(globals_curtime(), 0.1) < 0.05)
+                        if bUseDotted then
+                            for i = 1, 3 do
+                                if bInverse then
+                                    aUseColor[i] = 255 - aUseColor[i]
+                                else
+                                    aUseColor[i] = 0
+                                end
+                            end
                         end
-                    else
-                        if aInfo.m_bCreateBeam then
-                            g_CreateBeam(aInfo.m_vecPosition, aNextInfo.m_vecPosition, iDuration, aColor)
-                            aInfo.m_bCreateBeam = false
+                        
+                        if szMasterValue == "Line" then
+                            g_CreateLine(pPrev.vecPos, pEntPosTable[iIndex].vecPos, aUseColor, flDuration)
+                        elseif szMasterValue == "Glow" then
+                            g_CreateGlowBox(pCurrent.vecPos, g_VectorAngles(pPrev.vecPos - pCurrent.vecPos), Vector(0, flSize, flSize), Vector(flDistance, -flSize, -flSize), aUseColor, flDuration)
+                        else
+                            g_CreateBeam(pCurrent.vecPos, pPrev.vecPos, flDuration, aUseColor)
                         end
                     end
                 end
-            end
-
-            aInfo.m_flWaitTime = aInfo.m_flWaitTime - ((1 / iDuration) * flFrameTime)
-            -- Check if we have waited our duration
-            if aInfo.m_flWaitTime <= 0 then
-                aInfo.m_flAnimTime = aInfo.m_flAnimTime - ((1 / 0.5) * flFrameTime)
-                if aInfo.m_flAnimTime <= 0 then
-                    table_remove(g_aEntitys[iEntityIndex], iInfoIndex)
-                end
+                ::continue::
             end
         end
+
+        g_iOldTickcount = iTickCount
     end
+
+    g_DrawLines()
 end
 
 local function g_SetVisibility()
-    local bMasterValue = ui_get(g_iMasterCombo) ~= "Off"
+    local szMasterCombo = ui_get(g_iMasterCombo)
+    local bMasterValue = szMasterCombo ~= "Off"
+    local bDotted = ui_get(g_iDotted)
     ui_set_visible(g_iDuration, bMasterValue)
+    ui_set_visible(g_iSize, szMasterCombo == "Glow")
+    ui_set_visible(g_iDotted, bMasterValue)
     ui_set_visible(g_iLocalOnly, bMasterValue)
+    ui_set_visible(g_iInverse, bDotted)
+end
+
+local function g_SetVisDot()
+    local bMaster = ui_get(g_iDotted)
+    ui_set_visible(g_iInverse, bMaster)
 end
 
 g_SetVisibility()
+g_SetVisDot()
+ui_set_callback(g_iDotted, g_SetVisDot)
 ui_set_callback(g_iMasterCombo, g_SetVisibility)
 client_set_event_callback("paint", g_Paint)
