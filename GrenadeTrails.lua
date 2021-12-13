@@ -175,7 +175,7 @@ local function g_Paint()
             local ClassEntitys = entity_get_all(g_ClassNames[iClassNameIndex])
             for iKey, iEntityIndex in pairs(ClassEntitys) do
                 local bLocalOnly = (ui_get(g_iLocalOnly) and entity_get_prop(iEntityIndex, "m_hOwnerEntity") ~= iLocalPlayer)
-                if bLocalOnly or not g_Positions[iEntityIndex] or iTickCount - g_Positions[iEntityIndex][#g_Positions[iEntityIndex]].iTickCount > 4 then
+                if bLocalOnly or not g_Positions[iEntityIndex] or not g_Positions[iEntityIndex][#g_Positions[iEntityIndex]] or iTickCount - g_Positions[iEntityIndex][#g_Positions[iEntityIndex]].iTickCount > 4 then
                     g_Positions[iEntityIndex] = {}
                 end
                 if bLocalOnly then
