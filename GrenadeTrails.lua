@@ -89,7 +89,7 @@ local function g_CreateGlowBox(vecOrigin, vecAngle, vecMins, vecMaxs, aColor, fl
     if not GlowObjManager then
         return
     end
-    local Index = g_AddGlowBoxFn(GlowObjManager, vecOrigin, vecAngle, vecMins, vecMaxs, ffi.new("struct Color", ffi.new("unsigned char[4]", aColor[1], aColor[2], aColor[3], aColor[4])), flLife)
+    g_AddGlowBoxFn(GlowObjManager, vecOrigin, vecAngle, vecMins, vecMaxs, ffi.new("struct Color", ffi.new("unsigned char[4]", aColor[1], aColor[2], aColor[3], aColor[4])), flLife)
 end
 
 local function g_VectorAngles(vecForward)
@@ -106,7 +106,7 @@ local g_iLocalOnly      = ui_new_checkbox("VISUALS", "Effects", "Local only")
 local g_iDuration       = ui_new_slider("VISUALS", "Effects", "Duration", 10, 100, 3, true, "s", 0.1)
 local g_iSize           = ui_new_slider("VISUALS", "Effects", "Size", 10, 100, 20, true, "u", 0.01)
 local g_iDotted         = ui_new_checkbox("VISUALS", "Effects", "Dotted")
-local g_iInverse        = ui_new_checkbox("VISUALS", "Effects", "Inverse")
+local g_iDotColor       = ui_new_color_picker("VISUALS",  "Effects", "Grenade trails dot color", 0, 0, 0, 255)
 
 local g_Lines = {}
 local g_Positions = {}
@@ -169,8 +169,8 @@ local function g_Paint()
         local flDuration    = ui_get(g_iDuration) * 0.1
         local flSize        = ui_get(g_iSize) * 0.01
         local aColor        = {ui_get(g_iColor)}
+        local aDotColor     = {ui_get(g_iDotColor)}
         local bDotted       = ui_get(g_iDotted)
-        local bInverse      = bDotted and ui_get(g_iInverse)
         for iClassNameIndex = 1, #g_ClassNames do
             local ClassEntitys = entity_get_all(g_ClassNames[iClassNameIndex])
             for iKey, iEntityIndex in pairs(ClassEntitys) do
@@ -195,17 +195,8 @@ local function g_Paint()
                     local flDistance = pCurrent.vecPos:dist(pPrev.vecPos)
                     if flDistance ~= 0 then
                         -- Multiple nades can conflicting colors
-                        local aUseColor     = {unpack(aColor)}
                         local bUseDotted    = bDotted and (math_fmod(globals_curtime(), 0.1) < 0.05)
-                        if bUseDotted then
-                            for i = 1, 3 do
-                                if bInverse then
-                                    aUseColor[i] = 255 - aUseColor[i]
-                                else
-                                    aUseColor[i] = 0
-                                end
-                            end
-                        end
+                        local aUseColor     = {unpack(bUseDotted and aDotColor or aColor)}
                         
                         if szMasterValue == "Line" then
                             g_CreateLine(pPrev.vecPos, pEntPosTable[iIndex].vecPos, aUseColor, flDuration)
@@ -229,21 +220,13 @@ end
 local function g_SetVisibility()
     local szMasterCombo = ui_get(g_iMasterCombo)
     local bMasterValue = szMasterCombo ~= "Off"
-    local bDotted = ui_get(g_iDotted)
     ui_set_visible(g_iDuration, bMasterValue)
     ui_set_visible(g_iSize, szMasterCombo == "Glow")
     ui_set_visible(g_iDotted, bMasterValue)
     ui_set_visible(g_iLocalOnly, bMasterValue)
-    ui_set_visible(g_iInverse, bDotted)
-end
-
-local function g_SetVisDot()
-    local bMaster = ui_get(g_iDotted)
-    ui_set_visible(g_iInverse, bMaster)
+    ui_set_visible(g_iDotColor, bMasterValue)
 end
 
 g_SetVisibility()
-g_SetVisDot()
-ui_set_callback(g_iDotted, g_SetVisDot)
 ui_set_callback(g_iMasterCombo, g_SetVisibility)
 client_set_event_callback("paint", g_Paint)
